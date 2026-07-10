@@ -1,0 +1,27 @@
+#trimslate-bar {
+  position: fixed;
+  z-index: 9999;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #ffffff;
+  border: 0.5px solid #e8e7e0;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+  transition: opacity 0.3s ease;
+}
+
+#trimslate-bar.fade-out { opacity: 0; }
+#trimslate-bar svg { flex-shrink: 0; }
+#trimslate-bar .ts-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#trimslate-bar .ts-sub { font-size: 12px; color: #b0afa8; }
+
+@keyframes ts-spin { to { transform: rotate(360deg); } }
+#trimslate-bar .ts-spin { animation: ts-spin 0.8s linear infinite; color: #b0afa8; }
+#trimslate-bar .ts-check { color: #3B6D11; }
+#trimslate-bar .ts-warn { color: #854F0B; }

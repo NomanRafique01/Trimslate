@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<!-- pdf.js must load before offscreen.js sets workerSrc -->
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/mammoth.browser.min.js"></script>
+<!-- xlsx.full.min.js bundles its own ZIP reader (CFB) — no JSZip needed -->
+<script src="../lib/xlsx.full.min.js"></script>
+<script src="offscreen.js"></script>
+</body>
+</html>
