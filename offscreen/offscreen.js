@@ -127,31 +127,31 @@ function extractXLSX(buffer) {
 }
 
 // ── PPTX ──────────────────────────────────────────────────────────────────────
-// Uses XLSX (SheetJS) which bundles its own ZIP reader — no JSZip needed.
+// .pptx is a ZIP (OOXML), NOT a CFB/OLE2 file — that legacy format is only for
+// old .ppt. Reading it with XLSX.CFB.read() always throws, which silently fell
+// back to a raw-text regex scan that can never match (slide XML is
+// deflate-compressed inside the zip). Fixed by unzipping it for real, using
+// Chrome's native DecompressionStream — no extra library needed.
 async function extractPPTX(buffer) {
-  let zip;
+  let entries;
   try {
-    zip = XLSX.CFB.read(new Uint8Array(buffer), { type: 'array' });
+    entries = await unzip(new Uint8Array(buffer), /^ppt\/slides\/slide\d+\.xml$/i);
   } catch (e) {
-    // CFB read failed — fall back to raw XML scan
     return extractPPTXFallback(buffer);
   }
 
-  // SheetJS CFB stores paths like 'ppt/slides/slide1.xml'
-  const slideEntries = zip.FileIndex
-    .filter(f => /^ppt\/slides\/slide\d+\.xml$/i.test(f.name))
-    .sort((a, b) => {
-      const na = parseInt(a.name.match(/slide(\d+)/i)?.[1] || 0);
-      const nb = parseInt(b.name.match(/slide(\d+)/i)?.[1] || 0);
-      return na - nb;
-    });
+  const slideNames = Object.keys(entries).sort((a, b) => {
+    const na = parseInt(a.match(/slide(\d+)/i)?.[1] || 0);
+    const nb = parseInt(b.match(/slide(\d+)/i)?.[1] || 0);
+    return na - nb;
+  });
 
-  if (!slideEntries.length) return extractPPTXFallback(buffer);
+  if (!slideNames.length) return extractPPTXFallback(buffer);
 
-  const texts = slideEntries.map((entry, i) => {
-    const xml     = new TextDecoder().decode(new Uint8Array(entry.content));
+  const texts = slideNames.map((name, i) => {
+    const xml     = entries[name];
     const matches = [...xml.matchAll(/<a:t[^>]*>(.*?)<\/a:t>/g)].map(m =>
-      m[1].replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+      m[1].replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'")
     );
     return `[Slide ${i + 1}]\n${matches.join(' ')}`;
   });
@@ -160,12 +160,75 @@ async function extractPPTX(buffer) {
   return { text, stats: tokenStats(text, 0) };
 }
 
-// Fallback: treat buffer as text and regex-scan for <a:t> tags across the whole blob
+// Fallback: treat buffer as text and regex-scan for <a:t> tags across the whole blob.
+// Only ever succeeds on a corrupt/non-standard zip that a real reader can't parse.
 function extractPPTXFallback(buffer) {
   const raw     = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buffer));
   const matches = [...raw.matchAll(/<a:t[^>]*>(.*?)<\/a:t>/g)].map(m => m[1]);
   const text    = matches.join(' ');
   return { text, stats: tokenStats(text, 0) };
+}
+
+// ── Minimal native ZIP reader ─────────────────────────────────────────────────
+// Parses the central directory and decompresses only entries matching `filter`.
+// Handles both stored (method 0) and deflated (method 8) entries via the
+// browser's built-in DecompressionStream — avoids bundling JSZip just for this.
+async function unzip(bytes, filter) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // End Of Central Directory record; scan backwards (a comment field can follow it)
+  let eocd = -1;
+  const scanFloor = Math.max(0, bytes.length - 65557); // max comment size + EOCD size
+  for (let i = bytes.length - 22; i >= scanFloor; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd === -1) throw new Error('Not a valid ZIP (no EOCD found)');
+
+  const entryCount = view.getUint16(eocd + 10, true);
+  const cdOffset   = view.getUint32(eocd + 16, true);
+
+  const result = {};
+  let ptr = cdOffset;
+
+  for (let i = 0; i < entryCount; i++) {
+    if (view.getUint32(ptr, true) !== 0x02014b50) break; // not a central-dir header — stop
+
+    const method      = view.getUint16(ptr + 10, true);
+    const compSize     = view.getUint32(ptr + 20, true);
+    const nameLen      = view.getUint16(ptr + 28, true);
+    const extraLen     = view.getUint16(ptr + 30, true);
+    const commentLen   = view.getUint16(ptr + 32, true);
+    const localOffset  = view.getUint32(ptr + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
+
+    if (filter.test(name)) {
+      result[name] = await inflateEntry(bytes, view, localOffset, method, compSize);
+    }
+
+    ptr += 46 + nameLen + extraLen + commentLen;
+  }
+
+  return result;
+}
+
+async function inflateEntry(bytes, view, localOffset, method, compSize) {
+  // Local header's name/extra lengths can differ from the central directory's,
+  // so they must be read again to find where the actual data starts.
+  const nameLen   = view.getUint16(localOffset + 26, true);
+  const extraLen  = view.getUint16(localOffset + 28, true);
+  const dataStart = localOffset + 30 + nameLen + extraLen;
+  const compressed = bytes.subarray(dataStart, dataStart + compSize);
+
+  let raw;
+  if (method === 0) {
+    raw = compressed; // stored, no compression
+  } else if (method === 8) {
+    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    raw = new Uint8Array(await new Response(stream).arrayBuffer());
+  } else {
+    throw new Error(`Unsupported ZIP compression method ${method}`);
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(raw);
 }
 
 // ── HTML tag stripper ─────────────────────────────────────────────────────────

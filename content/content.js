@@ -66,6 +66,19 @@ function setBarSuccess(name, stats) {
   }, 1500);
 }
 
+function setBarNative(name, reason) {
+  if (!bar) createBar();
+  bar.innerHTML = `
+    <svg class="ts-icon ts-native" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+    <span class="ts-text">${name}</span>
+    <span class="ts-sub">complex PDF — sending file to Claude directly${reason ? ' (' + reason + ')' : ''}</span>
+  `;
+  setTimeout(() => {
+    bar.classList.add('fade-out');
+    setTimeout(() => { bar?.remove(); bar = null; }, 300);
+  }, 2500);
+}
+
 function setBarError(msg) {
   if (!bar) createBar();
   bar.innerHTML = `
@@ -117,7 +130,7 @@ function shouldIntercept(file) {
 // 8MB raw per chunk -> ~32MB once JSON-encoded as Array.from(), safely under the 64MiB sendMessage cap
 const CHUNK_BYTES = 8 * 1024 * 1024;
 
-async function handleFile(file) {
+async function handleFile(file, originalEvent) {
   if (!isSupported(file)) return false;
   if (PASSTHROUGH.test(file.name)) return false;
 
@@ -134,9 +147,17 @@ async function handleFile(file) {
   port.onMessage.addListener(response => {
     if (response.error) { setBarError(response.error); port.disconnect(); return; }
     if (response.text !== undefined) {
-      const txtName = file.name.replace(/\.[^.]+$/, '.txt');
-      setBarSuccess(txtName, formatStats(response.text));
-      injectTextIntoInput(response.text);
+      const quality = response.stats?.quality;
+      if (quality && quality.reliable === false) {
+        // Extraction is unreliable (scanned PDF, scrambled math layout, watermark, etc.)
+        // — don't inject noise into the chat, hand Claude the actual file instead.
+        setBarNative(file.name, quality.reason);
+        passThroughNative(originalEvent, file);
+      } else {
+        const txtName = file.name.replace(/\.[^.]+$/, '.txt');
+        setBarSuccess(txtName, formatStats(response.text));
+        injectTextIntoInput(response.text);
+      }
       port.disconnect();
     }
   });
@@ -151,27 +172,51 @@ async function handleFile(file) {
   return true; // handled
 }
 
+// Give the original file back to claude.ai's own upload handling, unmodified,
+// so Claude can read it natively (vision/PDF understanding) instead of us
+// injecting scrambled plain text. Marks the file so our own listeners ignore
+// it on the way back through.
+function passThroughNative(originalEvent, file) {
+  file.__trimslateBypass = true;
+  if (!originalEvent) return; // nothing to redispatch onto, safest to just stop here
+
+  const dt = new DataTransfer();
+  dt.items.add(file);
+
+  if (originalEvent.type === 'change') {
+    const input = originalEvent.target;
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  } else if (originalEvent.type === 'drop') {
+    const target = originalEvent.target;
+    const dropEvt = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+    target.dispatchEvent(dropEvt);
+  }
+}
+
 // ── Event listeners ───────────────────────────────────────────────────────────
 document.addEventListener('change', e => {
   const input = e.target;
   if (input.type !== 'file' || !input.files?.length) return;
   const file = input.files[0];
+  if (file.__trimslateBypass) return; // our own redispatch on the way to claude.ai natively — let it through
   if (!shouldIntercept(file)) return;
 
   e.stopPropagation();
   e.preventDefault();
-  input.value = ''; // clear so claude.ai gets nothing
-  handleFile(file, () => {}); // convert and inject text
+  input.value = ''; // clear so claude.ai gets nothing (we may hand the file back later via passThroughNative)
+  handleFile(file, e);
 }, true);
 
 document.addEventListener('drop', async e => {
   if (!e.dataTransfer?.files?.length) return;
   const file = e.dataTransfer.files[0];
+  if (file.__trimslateBypass) return; // our own redispatch — let claude.ai's own handler take it
   if (!shouldIntercept(file)) return;
 
   e.stopPropagation();
   e.preventDefault();
-  await handleFile(file);
+  await handleFile(file, e);
 }, true);
 
 // ── MutationObserver ─────────────────────────────────────────────────────────
