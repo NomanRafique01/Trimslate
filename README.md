@@ -14,7 +14,7 @@
 
 **Stop Burning Claude Tokens.**
 
-trimslate quietly converts PDFs, Word docs, spreadsheets, and slides into clean plain text
+Trimslate is a Chrome Extension which quietly converts PDFs, Word docs, spreadsheets, and slides into clean plain text
 *before* they ever reach Claude — so your context window holds more conversation and less file overhead.
 
 <br/>
@@ -47,7 +47,7 @@ trimslate quietly converts PDFs, Word docs, spreadsheets, and slides into clean 
 
 ## ⚡ The Problem
 
-When you upload a PDF or Word doc to an AI chat, the platform tokenizes everything — bloated formatting, embedded metadata, repeated headers and footers, structural noise — all of it eats into your context budget before a single word of your prompt is even read.
+When you upload a PDF or Word doc to the Claude, this extension tokenizes everything — bloated formatting, embedded metadata, repeated headers and footers, structural noise — all of it eats into your context budget before a single word of your prompt is even read.
 
 **trimslate sits between your file and Claude.** The moment you drop or pick a file, trimslate intercepts it, converts it to lean plain text locally in your browser, strips out repetitive junk, and hands Claude exactly what it needs — nothing more.
 
@@ -87,6 +87,15 @@ content.js  --->  service-worker.js  --->  offscreen.js
 
 > trimslate isn't on the Chrome Web Store yet — install it directly from source in 4 steps.
 
+
+**First, clone the repository to your computer.** Open a terminal, navigate to the folder where you want the project saved, and run the command below. This downloads all the extension files locally so Chrome can load them as an unpacked extension.
+
+```bash
+git clone https://github.com/NomanRafique01/Trimslate.git
+```
+
+Once cloned, you'll have a `trimslate` folder on your machine — you'll select this folder in Step 3 below.
+
 <br/>
 
 **Step 1 — Open the Chrome menu and go to Manage Extensions**
@@ -120,14 +129,6 @@ Click **Load unpacked**, then navigate to and select the `trimslate` folder you 
 You'll see trimslate appear in your extensions list with its toggle enabled. The extension is now active on claude.ai.
 
 ---
-
-**Clone the repo**
-
-```bash
-git clone https://github.com/NomanRafique01/Trimslate.git
-```
-
-Then follow the steps above.
 
 > **Note:** Chrome requires Developer mode to stay on for unpacked extensions. To update, run `git pull` and hit the reload (↻) icon on the extensions page.
 
